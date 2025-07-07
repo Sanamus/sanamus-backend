@@ -1,3 +1,37 @@
-# Default ignored files
-/shelf/
-/workspace.xml
+# IDE settings
+.vscode/
+.idea/
+shelf/
+workspace.xml
+
+# OS & temp files
+.DS_Store
+Thumbs.db
+*.tmp
+~$*
+
+# Python build files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
+
+# Installer & binary files
+*.exe
+*.msi
+*.pkg
+*.deb
+
+# dotenv
+.env
+
+# Cache & backup
+*.bak
+*.swp
