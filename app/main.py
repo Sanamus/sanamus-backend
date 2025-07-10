@@ -4,22 +4,19 @@ import time
 import base64
 from dotenv import load_dotenv
 import os
+from fastapi.responses import RedirectResponse
 
 load_dotenv()
 
-ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID")
-ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET")
-ZOOM_ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID")
-
+ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID") or "aej6RB_qS7aMUFtZF4CWIw"
+ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET") or "xqxcoSiwd0d5Yw18iHlIGynS6kOCyNnO"
+ZOOM_ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID") or "qccLladIR1GXcA31gqfhZg"
 
 app = FastAPI()
 
-ZOOM_CLIENT_ID = "aej6RB_qS7aMUFtZF4CWIw"
-ZOOM_CLIENT_SECRET = "xqxcoSiwd0d5Yw18iHlIGynS6kOCyNnO"
-ZOOM_ACCOUNT_ID = "qccLladIR1GXcA31gqfhZg"
-
 _zoom_token = None
 _token_expiry = 0
+waiting_user = None  # Simple in-memory matchmaking
 
 
 def get_zoom_access_token():
@@ -80,3 +77,82 @@ def create_meeting():
         "start_url": meeting["start_url"],
         "meeting_id": meeting["id"],
     }
+
+
+@app.get("/join")
+def join_matchmaking():
+    global waiting_user
+
+    if waiting_user is None:
+        # No one is waiting, this user becomes the waiting user
+        token = get_zoom_access_token()
+        url = "https://api.zoom.us/v2/users/me/meetings"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        meeting_data = {
+            "topic": "Sanamus Matchmaking Meeting",
+            "type": 1,
+            "settings": {
+                "join_before_host": True,
+                "approval_type": 0,
+                "mute_upon_entry": True
+            }
+        }
+
+        response = requests.post(url, headers=headers, json=meeting_data)
+        if response.status_code != 201:
+            raise HTTPException(
+                status_code=500, detail=f"Zoom meeting creation failed: {response.text}")
+        
+        meeting = response.json()
+        waiting_user = meeting["join_url"]
+        return {"message": "Waiting for another user to join...", "join_url": waiting_user}
+    
+    else:
+        # Someone is waiting, pair them
+        join_url = waiting_user
+        waiting_user = None  # Reset
+        return RedirectResponse(join_url)
+
+from fastapi.responses import RedirectResponse
+
+waiting_user = None  # Store the waiting user's meeting URL
+
+@app.get("/join")
+def join_matchmaking():
+    global waiting_user
+
+    if waiting_user is None:
+        # First user becomes the waiting user
+        token = get_zoom_access_token()
+        url = "https://api.zoom.us/v2/users/me/meetings"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        meeting_data = {
+            "topic": "Sanamus Matchmaking Meeting",
+            "type": 1,
+            "settings": {
+                "join_before_host": True,
+                "approval_type": 0,
+                "mute_upon_entry": True
+            }
+        }
+
+        response = requests.post(url, headers=headers, json=meeting_data)
+        if response.status_code != 201:
+            raise HTTPException(
+                status_code=500, detail=f"Zoom meeting creation failed: {response.text}")
+
+        meeting = response.json()
+        waiting_user = meeting["join_url"]
+        return {"message": "Waiting for another user to join...", "join_url": waiting_user}
+    
+    else:
+        # Pair with the waiting user
+        join_url = waiting_user
+        waiting_user = None  # Reset
+        return RedirectResponse(join_url)
