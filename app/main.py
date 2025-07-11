@@ -2,25 +2,28 @@ import time
 import base64
 import os
 import requests
+import uuid
+import redis
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Zoom credentials from environment or fallback
 ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID") or "your_client_id"
 ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET") or "your_client_secret"
 ZOOM_ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID") or "your_account_id"
+
+# Connect to Redis
+redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+MATCHMAKING_QUEUE = "sanamus:queue"
+MEETING_CACHE = "sanamus:meeting_cache"
 
 app = FastAPI()
 
 _zoom_token = None
 _token_expiry = 0
-
-# Simple in-memory matchmaking
-waiting_user = None
-meeting_cache = {}
 
 def get_zoom_access_token():
     global _zoom_token, _token_expiry
@@ -42,8 +45,7 @@ def get_zoom_access_token():
 
     response = requests.post(url, headers=headers, params=params)
     if response.status_code != 200:
-        raise HTTPException(
-            status_code=500, detail=f"Zoom token error: {response.text}")
+        raise HTTPException(status_code=500, detail=f"Zoom token error: {response.text}")
 
     data = response.json()
     _zoom_token = data["access_token"]
@@ -59,7 +61,7 @@ def create_zoom_meeting():
     }
     meeting_data = {
         "topic": "Sanamus Matchmaking",
-        "type": 1,  # Instant Meeting
+        "type": 1,
         "settings": {
             "join_before_host": True,
             "approval_type": 0,
@@ -71,27 +73,40 @@ def create_zoom_meeting():
 
     response = requests.post(url, headers=headers, json=meeting_data)
     if response.status_code != 201:
-        raise HTTPException(
-            status_code=500, detail=f"Zoom meeting creation failed: {response.text}")
+        raise HTTPException(status_code=500, detail=f"Zoom meeting creation failed: {response.text}")
 
     return response.json()
 
 @app.get("/join")
 async def join_meeting():
-    global waiting_user, meeting_cache
+    user_id = str(uuid.uuid4())  # Could be real user ID later
 
-    if waiting_user is None:
-        # First user - create a meeting and become host
-        meeting = create_zoom_meeting()
-        meeting_cache["meeting"] = meeting
-        waiting_user = True
-        return RedirectResponse(url=meeting["start_url"])
+    queue = redis_client.lrange(MATCHMAKING_QUEUE, 0, -1)
+
+    if queue:
+        # Match with the person at the front
+        partner_id = redis_client.lpop(MATCHMAKING_QUEUE)
+        meeting_data = create_zoom_meeting()
+
+        # Clear previous meeting (just in case)
+        redis_client.delete(MEETING_CACHE)
+
+        # Store full meeting info (optional)
+        redis_client.hmset(MEETING_CACHE, {
+            "host": user_id,
+            "guest": partner_id,
+            "start_url": meeting_data["start_url"],
+            "join_url": meeting_data["join_url"]
+        })
+
+        return RedirectResponse(url=meeting_data["join_url"])
     else:
-        # Second user - join existing meeting
-        meeting = meeting_cache.get("meeting")
-        waiting_user = None
-        meeting_cache = {}
-        return RedirectResponse(url=meeting["join_url"])
+        # No one waiting — queue this user
+        redis_client.rpush(MATCHMAKING_QUEUE, user_id)
+        return JSONResponse({
+            "status": "waiting",
+            "message": "Waiting for another user to join..."
+        })
 
 @app.get("/")
 def root():
