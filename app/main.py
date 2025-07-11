@@ -9,19 +9,26 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
+# Load .env file
 load_dotenv()
 
-ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID") or "your_client_id"
-ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET") or "your_client_secret"
-ZOOM_ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID") or "your_account_id"
+# Get Zoom credentials from environment
+ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID")
+ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET")
+ZOOM_ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID")
 
-# Connect to Redis
+# Debug print to verify environment variables loaded
+print("✅ ZOOM_CLIENT_ID:", ZOOM_CLIENT_ID)
+
+# Redis setup
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 MATCHMAKING_QUEUE = "sanamus:queue"
 MEETING_CACHE = "sanamus:meeting_cache"
 
+# FastAPI app
 app = FastAPI()
 
+# Cache Zoom token
 _zoom_token = None
 _token_expiry = 0
 
@@ -79,19 +86,19 @@ def create_zoom_meeting():
 
 @app.get("/join")
 async def join_meeting():
-    user_id = str(uuid.uuid4())  # Could be real user ID later
+    user_id = str(uuid.uuid4())  # Replace with real user ID if needed
 
     queue = redis_client.lrange(MATCHMAKING_QUEUE, 0, -1)
 
     if queue:
-        # Match with the person at the front
+        # Match found — create meeting
         partner_id = redis_client.lpop(MATCHMAKING_QUEUE)
         meeting_data = create_zoom_meeting()
 
-        # Clear previous meeting (just in case)
+        # Clear old meeting cache
         redis_client.delete(MEETING_CACHE)
 
-        # Store full meeting info (optional)
+        # Store meeting info in Redis
         redis_client.hmset(MEETING_CACHE, {
             "host": user_id,
             "guest": partner_id,
@@ -101,7 +108,7 @@ async def join_meeting():
 
         return RedirectResponse(url=meeting_data["join_url"])
     else:
-        # No one waiting — queue this user
+        # No match — add to queue
         redis_client.rpush(MATCHMAKING_QUEUE, user_id)
         return JSONResponse({
             "status": "waiting",
@@ -110,4 +117,6 @@ async def join_meeting():
 
 @app.get("/")
 def root():
+    return {"message": "Sanamus backend is running."}
+
     return JSONResponse({"message": "Sanamus backend is running."})
