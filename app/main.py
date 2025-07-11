@@ -118,41 +118,22 @@ def join_matchmaking():
 
 from fastapi.responses import RedirectResponse
 
-waiting_user = None  # Store the waiting user's meeting URL
+waiting_user = None
+meeting_cache = {}
 
 @app.get("/join")
-def join_matchmaking():
-    global waiting_user
+async def join_meeting():
+    global waiting_user, meeting_cache
 
     if waiting_user is None:
-        # First user becomes the waiting user
-        token = get_zoom_access_token()
-        url = "https://api.zoom.us/v2/users/me/meetings"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        meeting_data = {
-            "topic": "Sanamus Matchmaking Meeting",
-            "type": 1,
-            "settings": {
-                "join_before_host": True,
-                "approval_type": 0,
-                "mute_upon_entry": True
-            }
-        }
-
-        response = requests.post(url, headers=headers, json=meeting_data)
-        if response.status_code != 201:
-            raise HTTPException(
-                status_code=500, detail=f"Zoom meeting creation failed: {response.text}")
-
-        meeting = response.json()
-        waiting_user = meeting["join_url"]
-        return {"message": "Waiting for another user to join...", "join_url": waiting_user}
-    
+        # First user — create meeting and store it
+        meeting = create_zoom_meeting()
+        meeting_cache["meeting"] = meeting
+        waiting_user = True
+        return RedirectResponse(url=meeting["start_url"])  # Host redirected
     else:
-        # Pair with the waiting user
-        join_url = waiting_user
-        waiting_user = None  # Reset
-        return RedirectResponse(join_url)
+        # Second user — join meeting
+        meeting = meeting_cache.get("meeting")
+        waiting_user = None
+        meeting_cache = {}
+        return RedirectResponse(url=meeting["join_url"])  # Attendee redirected
